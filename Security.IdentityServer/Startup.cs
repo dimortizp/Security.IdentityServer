@@ -11,6 +11,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Security.IdentityServer.Data;
 using Security.IdentityServer.Models;
 using Security.IdentityServer.Services;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Cors.Infrastructure;
 
 namespace Security.IdentityServer
 {
@@ -26,6 +30,22 @@ namespace Security.IdentityServer
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
+            /// CORS
+            /// 
+            var corsBuilder = new CorsPolicyBuilder();
+            corsBuilder.AllowAnyOrigin()
+                        .AllowAnyHeader()
+                        .AllowAnyMethod()
+                        .AllowAnyOrigin()
+                        .AllowCredentials();
+
+            services.AddCors(options =>
+            {
+                options.AddPolicy("MyCorsPolicy", corsBuilder.Build());
+            });
+
+            /// Identity
+            /// 
             services.AddDbContext<ApplicationDbContext>(options =>
                 options.UseSqlServer(Configuration.GetConnectionString("DefaultConnection")));
 
@@ -46,6 +66,31 @@ namespace Security.IdentityServer
                 .AddInMemoryApiResources(Config.GetApiResources())
                 .AddInMemoryClients(Config.GetClients())
                 .AddAspNetIdentity<ApplicationUser>();
+
+            var signingKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(Configuration.GetSection("TokenAuthentication:SecretKey").Value));
+            var tokenValidationParameters = new TokenValidationParameters
+            {
+                // The signing key must match!
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = signingKey,
+                // Validate the JWT Issuer (iss) claim
+                ValidateIssuer = true,
+                ValidIssuer = Configuration.GetSection("TokenAuthentication:Issuer").Value,
+                // Validate the JWT Audience (aud) claim
+                ValidateAudience = true,
+                ValidAudience = Configuration.GetSection("TokenAuthentication:Audience").Value,
+                // Validate the token expiry
+                ValidateLifetime = true,
+                // If you want to allow a certain amount of clock drift, set that here:
+                ClockSkew = TimeSpan.Zero
+            };
+
+            services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                .AddJwtBearer(options =>
+                {
+                    options.TokenValidationParameters = tokenValidationParameters;
+                });
+
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -62,6 +107,8 @@ namespace Security.IdentityServer
                 app.UseExceptionHandler("/Home/Error");
             }
 
+            app.UseCors("MyCorsPolicy");
+
             app.UseStaticFiles();
 
             app.UseIdentityServer();
@@ -72,6 +119,9 @@ namespace Security.IdentityServer
                     name: "default",
                     template: "{controller=Home}/{action=Index}/{id?}");
             });
+
+            app.UseAuthentication();
+
         }
     }
 }
